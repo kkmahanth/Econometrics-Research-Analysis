@@ -1,0 +1,313 @@
+---
+title: "Econometrics Project"
+author: Karthik Mahanth Kattula, Akshata Bodhankar, Garima Tuteja, Syamala Anisha Katta
+date: "11/21/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(ggplot2,DMwR,dplyr,foreign,reshape2,plm,tidyverse,broom.mixed,lmtest,e1071)
+```
+
+```{r}
+guns<-read.dta("guns.dta",convert.factors = TRUE,
+                missing.type = FALSE,
+                convert.underscore = FALSE, warn.missing.labels = TRUE)
+```
+
+```{r}
+str(guns)
+```
+#The given  balanced panel data observes the guns related data across different states in USA over the years 1977-1999 .From structure of data, we see that variables vio,mur,rob,incarc_rate,avginc,pop,density,pb1064,pw1064,pm1029 are continuous and the variables year,stateid and shall should be indicator variables. 
+
+
+```{r}
+summary(guns)
+```
+
+```{r}
+mydata <- guns[, c(2,3,4,5,6,7,8,9,10,11)]
+cormat <- round(cor(mydata),2)
+melted_cormat <- melt(cormat)
+
+get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+}
+
+get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+}
+
+upper_tri <- get_upper_tri(cormat)
+
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Heatmap
+library(ggplot2)
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+```
+#There are significant strong correlations between violent rate , murder rate, robbery rate 
+
+
+#Check if there are any missing values in data
+```{r}
+sapply(guns, function(x) sum(is.na(x)))
+```
+
+#Average crime rate across each state in United States over the period 1977-1999
+```{r}
+shall<-data.frame(guns%>%group_by(stateid)%>%summarise(avgcrime=mean(vio),.groups='drop')%>%arrange(desc(avgcrime)))
+names(shall)<-c('stateid','avgcrime')
+head(shall)
+```
+
+#From the above analysis we see that State with Id 11 is having highest crime rate whereas State with Id 38 is having lowest crime rate. Further will see if there are any significant differences across these two states
+
+
+#Subset the two states with Id 38 and 11 and analyse if we can get any specific information 
+```{r}
+crimes<-guns[guns$stateid=='38' | guns$stateid=='11' | guns$stateid=='12',]
+```
+
+```{r}
+blacks<-data.frame(crimes%>%group_by(stateid)%>%summarise(blacks=mean(pb1064),whites=mean(pw1064),.groups='drop'))
+names(blacks)<-c('stateid','blacks','whites')
+blacks
+```
+
+```{r}
+cols <- c('red','blue');
+ylim <- c(0,max(blacks[c('blacks','whites')])*1.8);
+par(lwd=6);
+barplot(
+    t(blacks[c('blacks','whites')]),
+    beside=T,
+    ylim=ylim,
+    border=cols,
+    col='white',
+    names.arg=blacks$stateid,
+    xlab='StateId',
+    ylab='PopulationPercentage',
+    legend.text=c('AvgPercentageBlacks','AvgPercentageWhites'),
+    args.legend=list(text.col=cols,col=cols,border=cols,bty='n')
+);
+box();
+```
+#State Id 38 is having lowest crime rate and we see that Average percentage of Blacks living in State 38 is very less when compared with state which is having highest crime rate State 11. However in State Id 11, there are equal Blacks and Whites. So, we need to further analyse if blacks were the main cause for higher crime rate in State Id 11. Also we observed that crime rate in State id 11 is very high when compared with all other states.
+
+```{r}
+shall
+```
+
+#The average crime rate in State Id 11 is 2048 which is double than that of all the other states. In state id 12 the crime rate is 999 which is half that of the average crime rate in state id 11. 
+
+
+
+```{r}
+k<-crimes[crimes$stateid==11,]
+unique(k$shall)
+
+k<-crimes[crimes$stateid==12,]
+unique(k$shall)
+
+k<-crimes[crimes$stateid==38,]
+unique(k$shall)
+```
+#The shall issue laws were not passed in the State Id 11. It might be one of the reason that crime rate is very high when compared with other states and shall issue laws were passed in states 12 and 38. Also crime rate is very high in state 12 when compared to state 38, though the shall issue laws were passed in both of these two states. Percentage of blacks living in State 12 is 5.48 which is high when compared with State 38 1.48%. So, shall issue laws and percentage of blacks living in the state are some of the important features in this sample 
+
+
+#Histogram of Violent crime rate
+```{r}
+ggplot(guns,aes(x=vio)) + geom_histogram(binwidth = 40) +ggtitle("Violent Crime rate across United States")
+ggplot(guns,aes(x=log(vio))) + geom_histogram(binwidth =0.5) + ggtitle("Violent crime rate across United States")
+```
+
+#Before applying log transformation, the distribution of crime rate across United States in heavily skewed towards right and poitively skewed distribution. Most of the statistical analysis or statistical models require Normal Distribution because of its significant statistical properties such as constant mean and constant variance across the data. After applying necessary log transformation on data the distribution of crime rate became approximately symmetrical or atleast weakly skewed but not heavily skewed
+
+```{r}
+guns$vio<-log(guns$vio)
+```
+
+
+#The given guns data is a balanced panel of data on 50 United States plus the District of Columbia (for a total of 51 states) by year from 1977-1999. 
+#Ordinary Least Squares Estimation:
+```{r}
+ols <- lm(vio~mur + rob + incarc_rate + pb1064 + pw1064 + pm1029 + pop + avginc + density + shall,
+                  data = guns)
+tidy(ols)
+```
+
+#Check Linear Regression Assumptions
+```{r}
+par(mfrow=c(2,2))
+plot(ols)
+```
+
+#From the Ordinary Least Squares Regression Assumption plots, Expected value of random error is not zero(Residuals versus Fitted), Variance across the error terms are not constant(Scale-Location) i.e. Heteroskedasticity of Variances and Covariance between any two pair of error terms are not zero(Q-Q) error terms are not normally distributed
+
+
+#Pooles OLS Estimation: In case of Pooled OLS model we ignore the panel nature of data and estimate it using Ordinary Least squares method. However we need to specify arguments to ignore the panel nature of data i.e. the intercepts and slope coefficients do not vary across states and time
+```{r}
+pooled_ols <- plm(vio~mur + rob + incarc_rate + pb1064 + pw1064 + pm1029 + pop + avginc + density + shall, model = "pooling",
+                  data = guns,index = c("stateid","year"))
+tidy(pooled_ols)
+```
+#The least squares estimation equation using Pooled OLS estimation is                                                       log(vio)= 3.549 + 0.0034*mur + 0.0031*rob + 0.0012*incarc_rate + 0.057*pb1064 + 0.026*pw1064 -0.0056*pm1029 + 0.0074*pop -0.0084*avginc -0.2481*density -0.2779*shall
+#71.86 percentage of variation in crime rate across United States over time period 1977-1999 is explained by explanatory variables murder rate, robbery rate incarceration rate, balcks and whites living in states with age 10-64, average income, density and shall issue laws.                                                          
+#Except murder rate,percentage of male population in states with age 10-29 and average real per capita income  all the explanatory variables are significant at 1% 
+#The coefficient of Indicator variable shall issue laws is negative and the interpretation is  violent crime rate is going to reduce by 28% approximately when not having shall issue laws. Reducing the crime rate by approximately 28% by implementing shall issue laws is a good impact and shall issue laws are playing a major role in reducing the crime rate and also we can observe that the p-value is very very less and this coefficient is highly significant
+
+```{r}
+coeftest(pooled_ols, vcov=vcovHC(pooled_ols,type="HC0",cluster="group"))
+```
+#The estimators obtained using Ordinary Least squares estimation and pooled ols estimation are same. However the basic assumptions of linear regression are violated. Heteroskedasticity exists in data. The estimators are linear unbiased and consistent but they are no longer the best and standard erros are incorrect. Expected value of error term is zero is violated, we can relax this assumption for now because we are having consistent estimators. Having large sample sizes will converge to true population parameter. We can fix standard errors or calculate correct standard errors using Cluster Robust Standard Errors. The standard errors are now large using Cluster Robust Standard errors. The standard errors obtained using pooled OLS with least squares standard errors is very very less and  overstating the pooled ols model. Here we are ignoring the individual correlation within entities state over time. With cluster robust standard errors the standard errors and confidence intervals obtained are correct
+
+#In Pooled OLS model, estimators are same for all states and across all time periods. This seems to be not a good approach because there will be states where population of people living there are nice and having low crime rate and there will be states where more people in those states tends to commit crime always. So the nature of people living in these states in an unobservable characteristic and this might be correlated with error term resulting in endogeneity. So the variables such as percent of population living in states might be correlated with error term. This unobserved heterogeneity leads to biased and inconsistent estimators. Panel Data can control this unobserved heterogeneity using Fixed effects model
+
+
+#Entity Fixed Effects: Entities are States: The omitted variable which is hiding in the error term results in biased estimators known as Omitted Variable bias. These omitted variables might vary over entities but not across time. In such a case we should use Entity fixed effects model 
+```{r}
+fixedeffects_state <- plm(vio~mur + rob + incarc_rate + pb1064 + pw1064 + pm1029 + pop + avginc + density + shall, model = "within",data = guns,index ="stateid")
+tidy(fixedeffects_state)
+```
+#The estimators for explanatory variables are same across all entities and across all time periods. However the intercepts vary for each entity and if we observe now that passing shall issue laws across United States will reduce the crime rate by 5.5% approximately. In case of Pooled OLS we got an estimator which estimates that shall issue laws will reduce crime rate by 28%. 28% reduce in crime rate is huge and there may be chance that people will pretend as good till they get licence and start doing crime once they have guns. The nature or characteristics of people across different states is unobservable heterogeneity and this unobservable heterogeneity is varied across each state so the intercept varies across each state. The effect of entity fixed effects across each state varies and shown below
+
+```{r}
+fixef(fixedeffects_state)
+```
+```{r}
+summary(fixedeffects_state)
+```
+
+```{r}
+phtest(pooled_ols,fixedeffects_state)
+```
+#p-value is less than 0.05. So we reject the Null Hypothesis and conclude that the fixed effects model is better one
+
+
+#In case of entity fixed effects, we assumed unobservable heterogeneity is not varying over time and it is varying only across entities. However if the unobservable hetrogeneity is changing over time then the estimators are still biased only. There is a chance that nature of people change over time because if the government pass strict laws to reduce crime then crime rate will reduce automatically and the nature of people will change.
+
+#Time Fixed Effects:
+```{r}
+fixedeffects_time <- plm(vio~mur + rob + incarc_rate + pb1064 + pw1064 + pm1029 + pop + avginc + density + shall, model = "within",data = guns,index ="year")
+tidy(fixedeffects_time)
+```
+
+#With time fixed effects shall issue laws will reduce crime rate by 28% approximately
+
+```{r}
+fixef(fixedeffects_time)
+```
+#The estimator of shall issue laws seems to be biased because it is overstating that passing shall issue laws reduce crime rate by 28 %. This might be a problem because may be the government passed laws across some states which are more prone to crimes. In such a case as we are ignoring this nature it might be correlated with explanatory variable, and the exact interpretation of reduce in crime rate estimation , how much it is coming from error terma nd how much is coming from explanatory variable cannot be seperated. As a result the estimator will be biased. In such a case use fixed effects model varying across each state and also over time
+
+```{r}
+summary(fixedeffects_time)
+```
+
+#Entity time fixed effects:
+```{r}
+fixedeffects_entity_time <- plm(vio~mur + rob + incarc_rate + pb1064 + pw1064 + pm1029 + pop + avginc + density + shall, model = "within",data = guns,index =c("stateid","year"))
+tidy(fixedeffects_entity_time)
+```
+#With entity time fixed effects the estimator of shall seems to be reliable and also it is highly significant. Also the estimator is unbiased and consistent. However the standard errors are not correct. We can estimate or we can calculate correct standard errors using Robust Stnadrd errors
+
+```{r}
+summary(fixedeffects_entity_time)
+```
+
+#We cannot use Random Effects for this model because these entities are not coming from Random Population. All these entities are states in the country United states and they are not random in nature
+
+
+#As of now we observed that if shall issue laws were affecting the crime rate. However the robbery and murder rates are also considered as crimes and we further analyse that if the shall issue laws are playing any significant role in affecting these two
+
+#Robbery Rate:
+```{r}
+ggplot(guns,aes(x=rob)) + geom_histogram() + ggtitle("Average Robbery Rate across United States per 100,000 incidents")
+ggplot(guns,aes(x=mur)) + geom_histogram() + ggtitle("Average Murder Rate across United States per 100,000 incidents")
+```
+
+```{r}
+guns$rob<-log(guns$rob)
+guns$mur<-log(guns$mur)
+ggplot(guns,aes(x=rob)) + geom_histogram() + ggtitle("Average Robbery Rate across United States per 100,000 incidents")
+ggplot(guns,aes(x=mur)) + geom_histogram() + ggtitle("Average Murder Rate across United States per 100,000 incidents")
+```
+
+```{r}
+skewness(guns$rob)
+skewness(guns$mur)
+```
+
+```{r}
+fixedeffectsrob_entity_time <- plm(rob~mur + incarc_rate + pb1064 + pw1064 + pm1029 + pop + avginc + density + shall, model = "within",data = guns,index =c("stateid","year"))
+tidy(fixedeffectsrob_entity_time)
+```
+
+#Generally , we observe that the robbery rate also will reduce if we pass any strict laws. However our model is estimating that passing shall issue laws will increase the robbery rate by 1.6%. However this seems strange and lets do Hypothesis testing. p-value is 0.47 which is gretaer than 0.05. So we are unable to reject Null Hypothesis and conclude that there is no sufficient evidence to conclude that shall issue laws increase robbery rate and  the estimator is not significant and it is as expected.
+
+
+#Further lets see, if shall issue laws are impacting murder rate as well
+```{r}
+fixedeffectsmur_entity_time <- plm(mur~incarc_rate + pb1064 + pw1064 + pm1029 + pop + avginc + density + shall, model = "within",data = guns,index =c("stateid","year"))
+tidy(fixedeffectsmur_entity_time)
+```
+#From the above analysis, we see that passing shall issue laws will reduce the murder rate by 6% and it is significant at 5%
+
+
+
+#So, Based on these analysis, shall issue laws will reduce the crime rate in United States by approximately 5%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
